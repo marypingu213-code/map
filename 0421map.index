@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台南市虛擬教學地圖 - 公車與步行模擬</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Microsoft JhengHei', sans-serif; overflow: hidden; }
+        #map { height: 100vh; width: 100%; z-index: 1; }
+        
+        .student-icon {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: white;
+            border: 2px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            font-size: 20px;
+            transition: transform 0.2s;
+        }
+        .student-name {
+            font-size: 10px;
+            font-weight: bold;
+            color: #1e3a8a;
+            margin-top: -5px;
+            background: rgba(255,255,255,0.8);
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+        
+        .bus-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #f59e0b;
+            border: 2px solid #b45309;
+            border-radius: 8px;
+            width: 45px;
+            height: 35px;
+            font-size: 22px;
+            box-shadow: 0 3px 6px rgba(0,0,0,0.4);
+            position: relative;
+            transition: opacity 0.5s;
+        }
+        .passenger-count {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background-color: #ef4444;
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        
+        #control-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            width: 320px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="control-panel">
+        <h1 class="text-xl font-bold text-gray-800 mb-2">🏫 台南市教學地圖</h1>
+        <p class="text-sm text-gray-600 mb-4">請選擇模式，並點擊地圖互動。</p>
+        
+        <div class="flex space-x-2 mb-4">
+            <button id="btn-walk" class="flex-1 py-2 bg-blue-500 text-white rounded shadow hover:bg-blue-600 transition font-bold" onclick="setMode('walk')">
+                🚶 步行模式
+            </button>
+            <button id="btn-bus" class="flex-1 py-2 bg-gray-200 text-gray-700 rounded shadow hover:bg-orange-400 hover:text-white transition font-bold" onclick="setMode('bus')">
+                🚌 搭車模式
+            </button>
+        </div>
+
+        <div id="bus-controls" class="hidden bg-orange-50 p-3 rounded border border-orange-200 mb-4">
+            <p class="text-xs text-orange-800 mb-2">點擊【出發】，學生會排隊上公車。行駛中點擊站點可預約下車。</p>
+            <button class="w-full py-2 bg-orange-500 text-white rounded font-bold hover:bg-orange-600 shadow" onclick="startBus()">
+                出發！(沿6號路線)
+            </button>
+        </div>
+
+        <div id="walk-controls" class="bg-blue-50 p-3 rounded border border-blue-200 mb-4">
+            <p class="text-xs text-blue-800">點擊地圖上任一位置，學生們將排隊步行前往該處。</p>
+        </div>
+
+        <button class="w-full py-2 mt-2 bg-gray-100 text-gray-600 rounded border hover:bg-gray-200 transition text-sm" onclick="resetSystem()">
+            🔄 重置所有人事物
+        </button>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        // === 1. 初始化地圖與資料 ===
+        const map = L.map('map').setView([22.992, 120.205], 15);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // 整合路線節點與站點資訊
+        const route6Nodes = [
+            { coord: [22.9971, 120.2126], isStop: true, id: 0, name: "台南火車站" },
+            { coord: [22.9945, 120.2085], isStop: false },
+            { coord: [22.9918, 120.2045], isStop: true, id: 1, name: "民生綠園" },
+            { coord: [22.9880, 120.2060], isStop: true, id: 2, name: "延平郡王祠" },
+            { coord: [22.9868, 120.1979], isStop: true, id: 3, name: "新光三越" },
+            { coord: [22.9818, 120.1952], isStop: true, id: 4, name: "家齊高中" }
+        ];
+
+        // 學生初始位置設定 (從火車站旁邊開始，前後排隊)
+        const startBase = [22.9960, 120.2115];
+        const studentsData = [
+            { id: 's1', name: "小明", emoji: "👦", startCoord: [startBase[0], startBase[1]] },
+            { id: 's2', name: "小華", emoji: "👧", startCoord: [startBase[0] - 0.0003, startBase[1] + 0.0002] },
+            { id: 's3', name: "小強", emoji: "👨‍🎓", startCoord: [startBase[0] - 0.0006, startBase[1] + 0.0004] }
+        ];
+
+        // === 2. 系統狀態 ===
+        let currentMode = 'walk';
+        let students = [];
+        let busMarker = null;
+        let routeLine = null;
+        let stopMarkers = [];
+        
+        let busState = {
+            isRunning: false,
+            progressDist: 0,
+            passengers: [],
+            targetStopDist: -1, // 精準備扣留目標距離
+            targetStopId: -1,
+            totalDist: 0,
+            cumulativeDist: [],
+            isFaded: false,
+            isBoarding: false
+        };
+
+        let walkState = {
+            isWalking: false,
+            target: null,
+            reqId: null
+        };
+
+        // === 工具函數：向目標點等距移動 ===
+        function moveTowards(fromLatLng, toLatLng, distance) {
+            let totalDist = map.distance(fromLatLng, toLatLng);
+            if (totalDist <= distance || totalDist === 0) return L.latLng(toLatLng.lat, toLatLng.lng);
+            let ratio = distance / totalDist;
+            let lat = fromLatLng.lat + (toLatLng.lat - fromLatLng.lat) * ratio;
+            let lng = fromLatLng.lng + (toLatLng.lng - fromLatLng.lng) * ratio;
+            return L.latLng(lat, lng);
+        }
+
+        // === 3. 初始化路線與站點 ===
+        function initRoute() {
+            // 計算每個節點的累積距離
+            busState.cumulativeDist = [0];
+            busState.totalDist = 0;
+            for(let i = 1; i < route6Nodes.length; i++) {
+                let d = map.distance(route6Nodes[i-1].coord, route6Nodes[i].coord);
+                busState.totalDist += d;
+                busState.cumulativeDist.push(busState.totalDist);
+            }
+
+            // 動態路線圖層 (初始為空)
+            routeLine = L.polyline([], {
+                color: '#6b7280', weight: 4, opacity: 0.6, dashArray: '10, 10'
+            }).addTo(map);
+
+            // 繪製站點
+            route6Nodes.forEach((node, index) => {
+                if (!node.isStop) return;
+                
+                let circle = L.circleMarker(node.coord, {
+                    radius: 7, fillColor: "#ffffff", color: "#6b7280", weight: 2, opacity: 0.8, fillOpacity: 1
+                }).bindTooltip(node.name, { permanent: true, direction: 'right', className: 'text-xs font-bold text-gray-500 bg-transparent border-0 shadow-none' })
+                  .addTo(map);
+                
+                // 預約下車點擊事件
+                circle.on('click', () => {
+                    if (currentMode === 'bus' && busState.isRunning) {
+                        let targetDist = busState.cumulativeDist[index];
+                        // 確保該站還沒經過
+                        if (targetDist > busState.progressDist) {
+                            busState.targetStopDist = targetDist;
+                            busState.targetStopId = node.id;
+                            stopMarkers.forEach(s => s.circle.setStyle({ color: '#6b7280', fillColor: '#ffffff' }));
+                            circle.setStyle({ color: '#ef4444', fillColor: '#fca5a5' }); // 變紅燈
+                        }
+                    }
+                });
+                stopMarkers.push({ id: node.id, circle: circle, coord: node.coord });
+            });
+        }
+
+        // === 4. 動態路線繪製 (只顯示下一站/下下站) ===
+        function updateDynamicRoute() {
+            if (!routeLine) return;
+            if (busState.isFaded || (!busState.isRunning && busState.progressDist >= busState.totalDist && busState.totalDist > 0)) {
+                routeLine.setLatLngs([]); // 抵達終點後消失
+                return;
+            }
+
+            // 尋找目前所在的區段
+            let segment = 0;
+            while (busState.progressDist >= busState.cumulativeDist[segment + 1] && segment < route6Nodes.length - 2) {
+                segment++;
+            }
+
+            let currentBusPos = busMarker ? busMarker.getLatLng() : route6Nodes[0].coord;
+            
+            // 尋找下一個站點的索引
+            let nextStopIndex = -1;
+            for (let i = segment + 1; i < route6Nodes.length; i++) {
+                if (route6Nodes[i].isStop) { nextStopIndex = i; break; }
+            }
+
+            if (nextStopIndex === -1) {
+                // 到終點前，只畫剩餘部分
+                let path = [currentBusPos];
+                for (let i = segment + 1; i < route6Nodes.length; i++) path.push(route6Nodes[i].coord);
+                routeLine.setLatLngs(path);
+                return;
+            }
+
+            // 尋找下下一站的索引
+            let nextNextStopIndex = -1;
+            for (let i = nextStopIndex + 1; i < route6Nodes.length; i++) {
+                if (route6Nodes[i].isStop) { nextNextStopIndex = i; break; }
+            }
+
+            // 畫出到下一站的路線
+            let path = [currentBusPos];
+            for (let i = segment + 1; i <= nextStopIndex; i++) {
+                path.push(route6Nodes[i].coord);
+            }
+
+            // 如果距離下一站小於 300 公尺，預先顯示到下下站的路線
+            let distToNextStop = busState.cumulativeDist[nextStopIndex] - busState.progressDist;
+            if (distToNextStop < 300 && nextNextStopIndex !== -1) {
+                for (let i = nextStopIndex + 1; i <= nextNextStopIndex; i++) {
+                    path.push(route6Nodes[i].coord);
+                }
+            }
+            routeLine.setLatLngs(path);
+        }
+
+        // === 5. 建立學生標記 ===
+        function initStudents() {
+            studentsData.forEach(s => {
+                let icon = L.divIcon({
+                    className: 'custom-div-icon',
+                    html: `<div class="student-icon">${s.emoji}<div class="student-name">${s.name}</div></div>`,
+                    iconSize: [40, 40], iconAnchor: [20, 20]
+                });
+                let marker = L.marker(s.startCoord, { icon: icon, zIndexOffset: 1000 }).addTo(map);
+                students.push({ id: s.id, data: s, marker: marker, inBus: false });
+            });
+        }
+
+        // === 6. 模式切換邏輯 ===
+        window.setMode = function(mode) {
+            currentMode = mode;
+            let btnWalk = document.getElementById('btn-walk');
+            let btnBus = document.getElementById('btn-bus');
+            document.getElementById('bus-controls').classList.toggle('hidden', mode === 'walk');
+            document.getElementById('walk-controls').classList.toggle('hidden', mode === 'bus');
+
+            if (mode === 'walk') {
+                btnWalk.className = "flex-1 py-2 bg-blue-500 text-white rounded shadow transition font-bold";
+                btnBus.className = "flex-1 py-2 bg-gray-200 text-gray-700 rounded shadow hover:bg-orange-400 hover:text-white transition font-bold";
+            } else {
+                btnBus.className = "flex-1 py-2 bg-orange-500 text-white rounded shadow transition font-bold";
+                btnWalk.className = "flex-1 py-2 bg-gray-200 text-gray-700 rounded shadow hover:bg-blue-400 hover:text-white transition font-bold";
+                if (!busMarker) createBus();
+            }
+        };
+
+        // === 7. 步行模式互動 (排隊跟隨) ===
+        map.on('click', function(e) {
+            if (currentMode === 'walk' && !busState.isBoarding) {
+                walkState.target = e.latlng;
+                if (!walkState.isWalking) {
+                    walkState.isWalking = true;
+                    animateWalkLoop();
+                }
+            }
+        });
+
+        function animateWalkLoop() {
+            if (!walkState.isWalking) return;
+            let allReached = true;
+            let speed = 4;
+            let gap = 18; // 學生排隊間距 (公尺)
+
+            let active = students.filter(s => !s.inBus);
+            if (active.length === 0) { walkState.isWalking = false; return; }
+
+            // 帶頭者走向目標
+            let leader = active[0];
+            let l_pos = leader.marker.getLatLng();
+            if (map.distance(l_pos, walkState.target) > speed) {
+                allReached = false;
+                leader.marker.setLatLng(moveTowards(l_pos, walkState.target, speed));
+            } else {
+                leader.marker.setLatLng(walkState.target);
+            }
+
+            // 後面的人跟隨前面的人
+            for (let i = 1; i < active.length; i++) {
+                let follower = active[i];
+                let f_pos = follower.marker.getLatLng();
+                let target_pos = active[i-1].marker.getLatLng();
+                
+                if (map.distance(f_pos, target_pos) > gap) {
+                    allReached = false;
+                    follower.marker.setLatLng(moveTowards(f_pos, target_pos, speed));
+                }
+            }
+
+            if (!allReached) {
+                walkState.reqId = requestAnimationFrame(animateWalkLoop);
+            } else {
+                walkState.isWalking = false;
+            }
+        }
+
+        // === 8. 公車系統 ===
+        function createBus() {
+            updateBusIcon(0);
+            busMarker = L.marker(route6Nodes[0].coord, { icon: getBusIcon(0), zIndexOffset: 500 }).addTo(map);
+            updateDynamicRoute(); // 初始化顯示一小段路線
+        }
+
+        function getBusIcon(count) {
+            let countHtml = count > 0 ? `<div class="passenger-count">${count}</div>` : '';
+            return L.divIcon({
+                className: 'custom-div-icon',
+                html: `<div class="bus-icon" style="opacity: ${busState.isFaded ? 0.3 : 1}">🚌${countHtml}</div>`,
+                iconSize: [45, 35], iconAnchor: [22, 17]
+            });
+        }
+
+        function updateBusIcon(count) { if(busMarker) busMarker.setIcon(getBusIcon(count)); }
+
+        function boardBus(student) {
+            student.inBus = true;
+            map.removeLayer(student.marker);
+            busState.passengers.push(student);
+            updateBusIcon(busState.passengers.length);
+        }
+
+        function alightStudents(coord) {
+            let baseLat = coord[0] + 0.0001; // 讓下車的學生在站牌旁稍微排開
+            let baseLng = coord[1] + 0.0001;
+            busState.passengers.forEach((student, index) => {
+                student.inBus = false;
+                student.marker.setLatLng([baseLat - index * 0.0001, baseLng + index * 0.0001]);
+                student.marker.addTo(map);
+            });
+            busState.passengers = [];
+            updateBusIcon(0);
+        }
+
+        window.startBus = function() {
+            if (!busMarker || busState.isRunning || busState.isFaded || busState.isBoarding) return;
+            
+            // 阻斷普通步行
+            walkState.isWalking = false;
+            cancelAnimationFrame(walkState.reqId);
+
+            let active = students.filter(s => !s.inBus);
+            if (active.length > 0) {
+                busState.isBoarding = true;
+                autoBoardBus(() => {
+                    busState.isBoarding = false;
+                    startBusJourney();
+                });
+            } else {
+                startBusJourney();
+            }
+        };
+
+        // 自動排隊走向公車並上車
+        function autoBoardBus(callback) {
+            let speed = 5;
+            let gap = 15;
+            let busPos = busMarker.getLatLng();
+
+            function step() {
+                let active = students.filter(s => !s.inBus);
+                if (active.length === 0) { callback(); return; }
+
+                let leader = active[0];
+                let l_pos = leader.marker.getLatLng();
+                if (map.distance(l_pos, busPos) <= speed) {
+                    boardBus(leader);
+                } else {
+                    leader.marker.setLatLng(moveTowards(l_pos, busPos, speed));
+                }
+
+                for (let i = 1; i < active.length; i++) {
+                    let follower = active[i];
+                    let target_pos = active[i-1].marker.getLatLng();
+                    if (map.distance(follower.marker.getLatLng(), target_pos) > gap) {
+                        follower.marker.setLatLng(moveTowards(follower.marker.getLatLng(), target_pos, speed));
+                    }
+                }
+                requestAnimationFrame(step);
+            }
+            step();
+        }
+
+        function startBusJourney() {
+            busState.isRunning = true;
+            busState.progressDist = 0;
+            animateBus();
+        }
+
+        function animateBus() {
+            if (!busState.isRunning) return;
+            let speed = 8;
+            let nextProgress = busState.progressDist + speed;
+
+            // 檢查是否抵達使用者預約的站點
+            if (busState.targetStopDist !== -1 && nextProgress >= busState.targetStopDist) {
+                busState.progressDist = busState.targetStopDist;
+                
+                // 找出該站點的真實座標並停靠
+                let stopNode = route6Nodes.find(n => n.id === busState.targetStopId);
+                busMarker.setLatLng(stopNode.coord);
+                updateDynamicRoute();
+
+                // 煞車與下車邏輯
+                busState.isRunning = false;
+                alightStudents(stopNode.coord);
+                
+                // 恢復站點原本顏色並清除目標
+                stopMarkers.forEach(s => s.circle.setStyle({ color: '#6b7280', fillColor: '#ffffff' }));
+                busState.targetStopDist = -1;
+                busState.targetStopId = -1;
+
+                // 停靠 2 秒後發車
+                setTimeout(() => {
+                    busState.isRunning = true;
+                    requestAnimationFrame(animateBus);
+                }, 2000);
+                return;
+            }
+
+            // 抵達終點
+            if (nextProgress >= busState.totalDist) {
+                busState.isRunning = false;
+                busState.isFaded = true;
+                busMarker.setLatLng(route6Nodes[route6Nodes.length - 1].coord);
+                updateBusIcon(busState.passengers.length);
+                updateDynamicRoute();
+                return;
+            }
+
+            busState.progressDist = nextProgress;
+
+            // 計算目前座標
+            let segment = 0;
+            while (busState.progressDist > busState.cumulativeDist[segment + 1] && segment < route6Nodes.length - 2) {
+                segment++;
+            }
+
+            let p1 = route6Nodes[segment].coord;
+            let p2 = route6Nodes[segment + 1].coord;
+            let t = (busState.progressDist - busState.cumulativeDist[segment]) / (busState.cumulativeDist[segment + 1] - busState.cumulativeDist[segment]);
+            
+            let lat = p1[0] + (p2[0] - p1[0]) * t;
+            let lng = p1[1] + (p2[1] - p1[1]) * t;
+            busMarker.setLatLng([lat, lng]);
+
+            updateDynamicRoute(); // 更新視野內的路線
+            requestAnimationFrame(animateBus);
+        }
+
+        // === 9. 重置系統 ===
+        window.resetSystem = function() {
+            if (busMarker) { map.removeLayer(busMarker); busMarker = null; }
+            busState = { isRunning: false, progressDist: 0, passengers: [], targetStopDist: -1, targetStopId: -1, totalDist: busState.totalDist, cumulativeDist: busState.cumulativeDist, isFaded: false, isBoarding: false };
+            walkState.isWalking = false;
+            cancelAnimationFrame(walkState.reqId);
+            
+            stopMarkers.forEach(s => s.circle.setStyle({ color: '#6b7280', fillColor: '#ffffff' }));
+            
+            students.forEach((s, i) => {
+                s.inBus = false;
+                // 重置時依舊保持排隊陣型
+                s.marker.setLatLng([startBase[0] - i * 0.0003, startBase[1] + i * 0.0002]);
+                if (!map.hasLayer(s.marker)) s.marker.addTo(map);
+            });
+            
+            if (currentMode === 'bus') createBus();
+            if (routeLine) routeLine.setLatLngs([]);
+        };
+
+        // 啟動系統
+        initRoute();
+        initStudents();
+        setMode('walk'); 
+
+    </script>
+</body>
+</html>
