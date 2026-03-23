@@ -82,7 +82,6 @@
             <p class="text-xs text-emerald-800">1. 點擊預設地標以開啟相片集<br>2. 點擊地圖任意處，放置地圖標📍 (可自訂相片)。</p>
         </div>
 
-        <!-- 儲存與提取按鈕 -->
         <button class="w-full py-2 mt-2 bg-indigo-100 text-indigo-700 rounded border border-indigo-300 hover:bg-indigo-200 transition text-sm font-bold shadow-sm" onclick="openRecordManager()">
             💾 儲存與提取活動紀錄
         </button>
@@ -128,7 +127,7 @@
                 ➕ 將目前進度存為新紀錄
             </button>
 
-            <div class="font-bold text-gray-700 mb-2 border-b pb-1">已儲存的紀錄清單 (點擊即可載入)</div>
+            <div class="font-bold text-gray-700 mb-2 border-b pb-1">已儲存的紀錄清單</div>
             <div id="record-list" class="flex-1 overflow-y-auto border rounded p-2 space-y-1 min-h-[20vh] max-h-[40vh]"></div>
         </div>
     </div>
@@ -163,10 +162,8 @@
             maxZoom: 20
         }).addTo(map);
 
-        // 加入 scalable-pin 類別讓 SVG 可以動態縮放
         const customPinSVG = `<svg class="scalable-pin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" style="width: 28px; height: 38px; filter: drop-shadow(0 3px 2px rgba(0,0,0,0.4));"><path fill="#7bc0cd" d="M215.7 499.2C267 435 384 279.4 384 192C384 86 298 0 192 0S0 86 0 192c0 87.4 117 243 168.3 307.2c12.3 15.3 35.1 15.3 47.4 0zM192 128a64 64 0 1 1 0 128 64 64 0 1 1 0-128z"/></svg>`;
 
-        // 路線資料庫 (包含精準校對的座標)
         const busRoutes = {
             '6': [
                 { coord: [22.9838, 120.2443], isStop: true, id: '6_7', name: "虎尾寮重劃區" },
@@ -248,7 +245,6 @@
             { id: 'p5', name: "全台首學孔廟", coord: [22.9904, 120.2028], photos: [{url: 'https://picsum.photos/id/70/800/500', desc: '大成殿'}] }
         ];
 
-        // 建立一份當前路線的獨立拷貝 (支援拖曳儲存)
         let currentRouteNodes = JSON.parse(JSON.stringify(busRoutes['6']));
         let startBase = currentRouteNodes[0].coord;
 
@@ -258,7 +254,6 @@
             { id: 's2', name: "小華", emoji: "👧", active: true },
             { id: 's3', name: "小強", emoji: "👨‍🎓", active: true }
         ];
-
         let recordsDB = JSON.parse(localStorage.getItem('tainan_map_records')) || [];
 
         let currentMode = 'walk';
@@ -271,14 +266,13 @@
         let busState = { isRunning: false, progressDist: 0, passengers: [], targetStopDist: -1, targetStopId: -1, totalDist: 0, cumulativeDist: [], isFaded: false, isBoarding: false };
         let walkState = { isWalking: false, target: null, reqId: null };
 
-        // 註冊地圖縮放事件，動態更新 CSS 變數以縮放圖釘
+        // 地圖縮放事件更新 CSS 變數以縮放圖釘
         map.on('zoom', function() {
             let z = map.getZoom();
-            // 基準縮放層級設為 15，每縮放 1 級改變 0.2 倍大小，最小不小於 0.4 倍
             let scale = Math.max(0.4, 1 + (z - 15) * 0.2);
             document.documentElement.style.setProperty('--pin-scale', scale);
         });
-        map.fire('zoom'); // 初始化時觸發一次設定正確大小
+        map.fire('zoom');
 
         function moveTowards(fromLatLng, toLatLng, distance) {
             let totalDist = map.distance(fromLatLng, toLatLng);
@@ -289,13 +283,8 @@
 
         // === 3. 初始化動態路線與自適應圖標 ===
         function getRouteMarkerIcon(isStop, isActive) {
-            if (!isStop) {
-                return L.divIcon({ className: 'custom-div-icon', html: `<div class="w-2 h-2 bg-gray-400 rounded-full opacity-60 hover:opacity-100 hover:scale-[2] transition-transform shadow-sm cursor-move"></div>`, iconSize: [8, 8], iconAnchor: [4, 4] });
-            }
-            if (isActive) {
-                return L.divIcon({ className: 'custom-div-icon', html: `<div class="w-4 h-4 bg-red-500 border-2 border-white rounded-full shadow-md animate-pulse cursor-move"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
-            }
-            // 修改 border-blue-500 為 border-[#a2c8b1] (淡灰綠色)，使其亮度與地圖綠地相仿
+            if (!isStop) return L.divIcon({ className: 'custom-div-icon', html: `<div class="w-2 h-2 bg-gray-400 rounded-full opacity-60 hover:opacity-100 hover:scale-[2] transition-transform shadow-sm cursor-move"></div>`, iconSize: [8, 8], iconAnchor: [4, 4] });
+            if (isActive) return L.divIcon({ className: 'custom-div-icon', html: `<div class="w-4 h-4 bg-red-500 border-2 border-white rounded-full shadow-md animate-pulse cursor-move"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
             return L.divIcon({ className: 'custom-div-icon', html: `<div class="w-3 h-3 bg-white border-[2.5px] border-[#a2c8b1] rounded-full shadow hover:scale-[1.8] transition-transform cursor-move"></div>`, iconSize: [12, 12], iconAnchor: [6, 6] });
         }
 
@@ -310,10 +299,8 @@
                 marker.on('dragend', function(e) {
                     let newPos = e.target.getLatLng();
                     currentRouteNodes[index].coord = [newPos.lat, newPos.lng];
-                    recalculateDistances(); 
-                    updateDynamicRoute();   
+                    recalculateDistances(); updateDynamicRoute();   
                 });
-                
                 stopMarkers.push({ id: node.id || `wp_${index}`, marker: marker, node: node, index: index });
             });
             updateDynamicRoute();
@@ -410,7 +397,7 @@
         window.deleteStudent = function(index) { if(confirm('確定要刪除這位學生嗎？')) { allStudentsDB.splice(index, 1); renderStudentList(); } }
         window.saveStudents = function() { localStorage.setItem('tainan_map_students', JSON.stringify(allStudentsDB)); closeStudentManager(); resetSystem(); }
 
-        // === 6. 儲存與提取紀錄 ===
+        // === 6. 儲存與提取紀錄 (帶編輯功能) ===
         window.openRecordManager = function() { document.getElementById('record-modal').style.display = 'flex'; renderRecordList(); }
         window.closeRecordManager = function() { document.getElementById('record-modal').style.display = 'none'; }
         function renderRecordList() {
@@ -458,37 +445,11 @@
             closeRecordManager();
         }
         window.deleteRecord = function(index) { if(confirm('確定要永久刪除這筆紀錄嗎？')) { recordsDB.splice(index, 1); localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); } }
-
-        window.renameRecord = function(index) {
-            let newName = prompt("請輸入新的紀錄名稱：", recordsDB[index].name);
-            if (newName && newName.trim() !== "") {
-                recordsDB[index].name = newName.trim();
-                localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB));
-                renderRecordList();
-            }
-        };
-
+        window.renameRecord = function(index) { let newName = prompt("請輸入新的紀錄名稱：", recordsDB[index].name); if (newName && newName.trim() !== "") { recordsDB[index].name = newName.trim(); localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); } };
         window.updateRecord = function(index) {
             if (!confirm(`確定要將目前的進度「覆蓋」儲存到【${recordsDB[index].name}】嗎？\n(舊有的紀錄將會被更新)`)) return;
-            
-            let record = { 
-                name: recordsDB[index].name, 
-                timestamp: Date.now(), 
-                busRouteId: document.getElementById('bus-route-select').value, 
-                customRouteNodes: JSON.parse(JSON.stringify(currentRouteNodes)), 
-                students: JSON.parse(JSON.stringify(allStudentsDB)), 
-                customMarksData: customMarks.map(m => ({ lat: m.getLatLng().lat, lng: m.getLatLng().lng, photos: JSON.parse(JSON.stringify(m.photos)), markId: m.markId })), 
-                poiDataState: poiData.map(p => ({ id: p.id, isActive: p.isActive, photos: JSON.parse(JSON.stringify(p.photos)) })) 
-            };
-            
-            try { 
-                recordsDB[index] = record; 
-                localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); 
-                renderRecordList(); 
-                alert(`✅ 成功更新進度至：【${record.name}】`); 
-            } catch(e) { 
-                alert("❌ 儲存失敗！可能是照片太大超出了儲存容量限制。"); 
-            }
+            let record = { name: recordsDB[index].name, timestamp: Date.now(), busRouteId: document.getElementById('bus-route-select').value, customRouteNodes: JSON.parse(JSON.stringify(currentRouteNodes)), students: JSON.parse(JSON.stringify(allStudentsDB)), customMarksData: customMarks.map(m => ({ lat: m.getLatLng().lat, lng: m.getLatLng().lng, photos: JSON.parse(JSON.stringify(m.photos)), markId: m.markId })), poiDataState: poiData.map(p => ({ id: p.id, isActive: p.isActive, photos: JSON.parse(JSON.stringify(p.photos)) })) };
+            try { recordsDB[index] = record; localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); alert(`✅ 成功更新進度至：【${record.name}】`); } catch(e) { alert("❌ 儲存失敗！可能是照片太大超出了儲存容量限制。"); }
         };
 
         // === 7. 模式與地圖事件 ===
@@ -545,7 +506,7 @@
             if (nextStopIndex !== -1) {
                 let node = currentRouteNodes[nextStopIndex]; busState.targetStopDist = busState.cumulativeDist[nextStopIndex]; busState.targetStopId = node.id;
                 stopMarkers.forEach(s => {
-                    if (s.node.id === node.id) s.marker.setIcon(getRouteMarkerIcon(true, true)); // 紅點
+                    if (s.node.id === node.id) s.marker.setIcon(getRouteMarkerIcon(true, true)); 
                     else s.marker.setIcon(getRouteMarkerIcon(s.node.isStop, false));
                 });
                 if (btnElement) {
@@ -612,7 +573,7 @@
             if (currentMode === 'bus') createBus();
         };
 
-        // === 10. 相片庫系統 ===
+        // === 10. 相片庫系統 (加入圖片壓縮技術) ===
         let currentPhotos = [], currentPhotoIndex = 0;
         window.openGallery = function(title, photos) { currentPhotos = photos || []; currentPhotoIndex = 0; document.getElementById('gallery-title').innerText = title; document.getElementById('photo-modal').style.display = 'flex'; updateGalleryUI(); map.closePopup(); };
         window.closeGallery = function() { document.getElementById('photo-modal').style.display = 'none'; };
@@ -628,13 +589,57 @@
                 descEl.innerText = `${photo.desc} (${currentPhotoIndex + 1}/${currentPhotos.length})`; btnDel.style.display = 'inline-block';
             }
         }
+        
         window.addPhoto = function() {
-            let input = document.createElement('input'); input.type = 'file'; input.accept = 'image/*';
+            let input = document.createElement('input'); 
+            input.type = 'file'; 
+            input.accept = 'image/*';
             input.onchange = e => {
                 let file = e.target.files[0];
-                if (file) { let reader = new FileReader(); reader.onload = event => { let desc = prompt("請輸入這張相片的簡單解說（可留空）：", "教學相片"); currentPhotos.push({ url: event.target.result, desc: desc || '' }); currentPhotoIndex = currentPhotos.length - 1; updateGalleryUI(); }; reader.readAsDataURL(file); }
-            }; input.click();
+                if (file) { 
+                    let reader = new FileReader(); 
+                    reader.onload = event => { 
+                        // --- 圖片壓縮引擎開始 ---
+                        let img = new Image();
+                        img.onload = function() {
+                            let canvas = document.createElement('canvas');
+                            let ctx = canvas.getContext('2d');
+                            
+                            // 設定最大解析度為 800x800，避免佔用 LocalStorage 空間
+                            let MAX_WIDTH = 800;
+                            let MAX_HEIGHT = 800;
+                            let width = img.width;
+                            let height = img.height;
+
+                            if (width > height) {
+                                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+                            } else {
+                                if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
+                            }
+
+                            canvas.width = width;
+                            canvas.height = height;
+                            ctx.drawImage(img, 0, 0, width, height);
+
+                            // 轉換為 JPEG，壓縮品質 0.6 (容量極小化，教學展示夠用)
+                            let compressedDataUrl = canvas.toDataURL('image/jpeg', 0.6);
+
+                            let desc = prompt("請輸入這張相片的簡單解說（可留空）：", "教學相片"); 
+                            if (desc !== null) { // 確保不是按了取消
+                                currentPhotos.push({ url: compressedDataUrl, desc: desc || '' }); 
+                                currentPhotoIndex = currentPhotos.length - 1; 
+                                updateGalleryUI(); 
+                            }
+                        };
+                        img.src = event.target.result;
+                        // --- 圖片壓縮引擎結束 ---
+                    }; 
+                    reader.readAsDataURL(file); 
+                }
+            }; 
+            input.click();
         };
+
         window.deletePhoto = function() {
             if (currentPhotos.length === 0) return;
             if (confirm("確定要刪除這張照片嗎？")) { currentPhotos.splice(currentPhotoIndex, 1); if (currentPhotoIndex >= currentPhotos.length) currentPhotoIndex = Math.max(0, currentPhotos.length - 1); updateGalleryUI(); }
