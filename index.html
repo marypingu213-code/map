@@ -157,21 +157,21 @@
 
     <script>
         // === 1. 初始化地圖與資料 ===
-        const map = L.map('map').setView([22.990, 120.203], 15);
+        const map = L.map('map', { maxZoom: 19 }).setView([22.990, 120.203], 15);
         
-        // 底圖：預設使用 CARTO，若圖磚連續載入失敗則自動切換到 OpenStreetMap 官方圖磚
+        // 底圖：CARTO 已改為需要 API 金鑰（會回傳「API KEY REQUIRED」圖片），改用免金鑰的 OpenStreetMap 官方圖磚；
+        // 若 OSM 圖磚連續載入失敗，則自動切換到 Esri 街道圖
         let tileErrorCount = 0, tileLoadCount = 0;
-        const baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-            attribution: '© OpenStreetMap contributors © CARTO',
-            subdomains: 'abcd',
-            maxZoom: 20
+        const baseLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
         }).addTo(map);
         baseLayer.on('tileload', () => { tileLoadCount++; });
         baseLayer.on('tileerror', () => {
             tileErrorCount++;
             if (tileErrorCount >= 5 && tileLoadCount === 0 && map.hasLayer(baseLayer)) {
                 map.removeLayer(baseLayer);
-                L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 19 }).addTo(map);
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles © Esri', maxZoom: 19 }).addTo(map);
             }
         });
         // 視窗大小改變或頁面載入完成時，重新計算地圖尺寸，避免地圖區塊變成空白
