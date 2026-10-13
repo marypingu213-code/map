@@ -5,8 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>寶石鑑定室戶外教育地圖 - 公車與步行模擬</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link id="leaflet-css" rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" onerror="this.onerror=null; this.href='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- 備援：若 unpkg 無法連線，改從其他 CDN 載入 Leaflet，避免地圖整個不見 -->
+    <script>window.L || document.write('<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"><\/script>');</script>
+    <script>window.L || document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"><\/script>');</script>
     <style>
         body, html { margin: 0; padding: 0; height: 100%; font-family: 'Microsoft JhengHei', sans-serif; overflow: hidden; }
         #map { height: 100vh; width: 100%; z-index: 1; }
@@ -156,11 +159,24 @@
         // === 1. 初始化地圖與資料 ===
         const map = L.map('map').setView([22.990, 120.203], 15);
         
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        // 底圖：預設使用 CARTO，若圖磚連續載入失敗則自動切換到 OpenStreetMap 官方圖磚
+        let tileErrorCount = 0, tileLoadCount = 0;
+        const baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
             attribution: '© OpenStreetMap contributors © CARTO',
             subdomains: 'abcd',
             maxZoom: 20
         }).addTo(map);
+        baseLayer.on('tileload', () => { tileLoadCount++; });
+        baseLayer.on('tileerror', () => {
+            tileErrorCount++;
+            if (tileErrorCount >= 5 && tileLoadCount === 0 && map.hasLayer(baseLayer)) {
+                map.removeLayer(baseLayer);
+                L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 19 }).addTo(map);
+            }
+        });
+        // 視窗大小改變或頁面載入完成時，重新計算地圖尺寸，避免地圖區塊變成空白
+        window.addEventListener('load', () => map.invalidateSize());
+        window.addEventListener('resize', () => map.invalidateSize());
 
         const customPinSVG = `<svg class="scalable-pin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" style="width: 28px; height: 38px; filter: drop-shadow(0 3px 2px rgba(0,0,0,0.4));"><path fill="#7bc0cd" d="M215.7 499.2C267 435 384 279.4 384 192C384 86 298 0 192 0S0 86 0 192c0 87.4 117 243 168.3 307.2c12.3 15.3 35.1 15.3 47.4 0zM192 128a64 64 0 1 1 0 128 64 64 0 1 1 0-128z"/></svg>`;
 
@@ -249,12 +265,17 @@
         let startBase = currentRouteNodes[0].coord;
 
         // === 2. 核心狀態庫 ===
-        let allStudentsDB = JSON.parse(localStorage.getItem('tainan_map_students')) || [
+        // 安全讀取 localStorage：資料損毀或瀏覽器禁止存取時不會讓整個地圖程式停擺
+        function loadStorage(key, fallback) {
+            try { let v = JSON.parse(localStorage.getItem(key)); return Array.isArray(v) ? v : fallback; }
+            catch (e) { console.warn(`localStorage「${key}」資料無法讀取，已改用預設值`, e); return fallback; }
+        }
+        let allStudentsDB = loadStorage('tainan_map_students', null) || [
             { id: 's1', name: "小明", emoji: "👦", active: true },
             { id: 's2', name: "小華", emoji: "👧", active: true },
             { id: 's3', name: "小強", emoji: "👨‍🎓", active: true }
         ];
-        let recordsDB = JSON.parse(localStorage.getItem('tainan_map_records')) || [];
+        let recordsDB = loadStorage('tainan_map_records', []);
 
         let currentMode = 'walk';
         let students = [];      
