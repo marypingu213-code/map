@@ -176,6 +176,8 @@
                 if (HIDDEN_SOURCE_LAYERS.includes(layer['source-layer'])) return false;
                 // 文字圖層只留路名
                 if (layer.type === 'symbol' && layer['source-layer'] !== 'transportation_name') return false;
+                // 移除省道、縣道、鄉道的道路編號牌（帶有框框圖示的文字圖層）
+                if (layer.type === 'symbol' && (layer.layout && layer.layout['icon-image'] || /shield/i.test(layer.id))) return false;
                 return true;
             });
             style.layers.forEach(layer => {
