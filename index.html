@@ -10,6 +10,12 @@
     <!-- 備援：若 unpkg 無法連線，改從其他 CDN 載入 Leaflet，避免地圖整個不見 -->
     <script>window.L || document.write('<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"><\/script>');</script>
     <script>window.L || document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"><\/script>');</script>
+    <!-- 向量底圖：MapLibre + Leaflet 外掛，可自訂只顯示街道巷弄 -->
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" onerror="this.onerror=null; this.href='https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css';" />
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script>window.maplibregl || document.write('<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"><\/script>');</script>
+    <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js"></script>
+    <script>(window.L && L.maplibreGL) || document.write('<script src="https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js"><\/script>');</script>
     <style>
         body, html { margin: 0; padding: 0; height: 100%; font-family: 'Microsoft JhengHei', sans-serif; overflow: hidden; }
         #map { height: 100vh; width: 100%; z-index: 1; }
@@ -159,21 +165,36 @@
         // === 1. 初始化地圖與資料 ===
         const map = L.map('map', { maxZoom: 19 }).setView([22.990, 120.203], 15);
         
-        // 底圖：CARTO 已改為需要 API 金鑰（會回傳「API KEY REQUIRED」圖片），改用免金鑰的 OpenStreetMap 官方圖磚；
-        // 若 OSM 圖磚連續載入失敗，則自動切換到 Esri 街道圖
-        let tileErrorCount = 0, tileLoadCount = 0;
-        const baseLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors',
-            maxZoom: 19
-        }).addTo(map);
-        baseLayer.on('tileload', () => { tileLoadCount++; });
-        baseLayer.on('tileerror', () => {
-            tileErrorCount++;
-            if (tileErrorCount >= 5 && tileLoadCount === 0 && map.hasLayer(baseLayer)) {
-                map.removeLayer(baseLayer);
-                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles © Esri', maxZoom: 19 }).addTo(map);
-            }
-        });
+        // 底圖：使用 OpenFreeMap 免金鑰的淡色向量圖（Positron），並移除房屋輪廓、門牌、店家/服飾等圖示與地名，
+        // 只保留街道巷弄與路名；若向量底圖無法使用，改用 Esri 淡灰色底圖
+        const HIDDEN_SOURCE_LAYERS = ['building', 'housenumber', 'poi', 'place', 'water_name', 'aerodrome_label', 'mountain_peak'];
+        function addFallbackBaseLayer() {
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles © Esri', maxZoom: 19, maxNativeZoom: 16 }).addTo(map);
+        }
+        function simplifyStyle(style) {
+            style.layers = style.layers.filter(layer => {
+                if (HIDDEN_SOURCE_LAYERS.includes(layer['source-layer'])) return false;
+                // 文字圖層只留路名
+                if (layer.type === 'symbol' && layer['source-layer'] !== 'transportation_name') return false;
+                return true;
+            });
+            style.layers.forEach(layer => {
+                if (layer.type === 'symbol' && layer.layout && layer.layout['text-field']) {
+                    layer.layout['text-field'] = ['coalesce', ['get', 'name:zh-Hant'], ['get', 'name']];
+                    layer.paint = Object.assign({}, layer.paint, { 'text-color': '#9ca3af', 'text-halo-color': '#ffffff' });
+                }
+            });
+            return style;
+        }
+        (function addBaseLayer() {
+            if (!window.maplibregl || !L.maplibreGL) { addFallbackBaseLayer(); return; }
+            fetch('https://tiles.openfreemap.org/styles/positron')
+                .then(res => { if (!res.ok) throw new Error('style HTTP ' + res.status); return res.json(); })
+                .then(style => {
+                    L.maplibreGL({ style: simplifyStyle(style), attribution: '© OpenStreetMap contributors © OpenFreeMap', opacity: 0.85 }).addTo(map);
+                })
+                .catch(err => { console.warn('向量底圖載入失敗，改用備援底圖', err); addFallbackBaseLayer(); });
+        })();
         // 視窗大小改變或頁面載入完成時，重新計算地圖尺寸，避免地圖區塊變成空白
         window.addEventListener('load', () => map.invalidateSize());
         window.addEventListener('resize', () => map.invalidateSize());
