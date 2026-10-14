@@ -76,7 +76,15 @@
                 <option value="3">公車 3 號 (復興國中 ➡️ 台南公園)</option>
                 <option value="20">公車 20 號 (南紡購物 ➡️ 永康車站)</option>
                 <option value="77">公車 77 號 (南紡購物 ➡️ 安平古堡)</option>
+                <option value="tour">🚍 遊覽車 (自訂路線)</option>
             </select>
+            <div id="tour-controls" class="hidden mb-3 p-2 bg-white rounded border border-orange-200 text-xs text-gray-700">
+                <label class="flex items-center gap-2 font-bold text-sm text-orange-700 cursor-pointer mb-1">
+                    <input type="checkbox" id="tour-edit-toggle" class="h-4 w-4" onchange="toggleTourEdit(this.checked)"> ✏️ 編輯路線
+                </label>
+                <p class="text-gray-500 leading-relaxed mb-2">編輯中：點地圖＝在路線最後新增站點；點虛線＝插入轉折點；點圓圈＝改名／切換站點與轉折點／刪除。圓圈可直接拖曳。</p>
+                <button onclick="clearTourRoute()" class="w-full py-1 bg-gray-100 border rounded hover:bg-gray-200 font-bold">🗑️ 清空路線重新畫</button>
+            </div>
             <div class="flex space-x-2">
                 <button class="flex-1 py-2 bg-orange-500 text-white rounded font-bold hover:bg-orange-600 shadow" onclick="startBus()">出發！(上車)</button>
                 <button class="flex-1 py-2 bg-red-500 text-white rounded font-bold hover:bg-red-600 shadow transition" onclick="requestAlight(this)">🛑 下站下車</button>
@@ -300,6 +308,14 @@
         ];
         let recordsDB = loadStorage('tainan_map_records', []);
 
+        // 遊覽車自訂路線：存在瀏覽器中，重新開啟網頁時沿用
+        const TOUR_ROUTE_KEY = 'tainan_map_tour_route';
+        busRoutes['tour'] = loadStorage(TOUR_ROUTE_KEY, null) || [
+            { coord: [22.9918, 120.2045], isStop: true, id: 'tour_start', name: "上車點" },
+            { coord: [22.9975, 120.2023], isStop: true, id: 'tour_end', name: "下車點" }
+        ];
+        let tourEditing = false;
+
         let currentMode = 'walk';
         let students = [];      
         let busMarker = null;
@@ -334,16 +350,21 @@
 
         function initRoute() {
             recalculateDistances();
-            if (!routeLine) routeLine = L.polyline([], { color: '#6b7280', weight: 4, opacity: 0.6, dashArray: '10, 10' }).addTo(map);
+            if (!routeLine) {
+                routeLine = L.polyline([], { color: '#6b7280', weight: tourEditing ? 7 : 4, opacity: 0.6, dashArray: '10, 10', bubblingMouseEvents: false }).addTo(map);
+                routeLine.on('click', e => { if (tourEditing) insertTourWaypoint(e.latlng); });
+            }
 
             currentRouteNodes.forEach((node, index) => {
                 let marker = L.marker(node.coord, { icon: getRouteMarkerIcon(node.isStop, false), draggable: true, zIndexOffset: 600 }).addTo(map);
-                if (node.isStop) marker.bindTooltip(node.name, { permanent: false, direction: 'top', className: 'text-xs font-bold text-gray-700 border-0 shadow-sm px-1 py-0' });
+                if (node.isStop) marker.bindTooltip(escapeHtml(node.name), { permanent: false, direction: 'top', className: 'text-xs font-bold text-gray-700 border-0 shadow-sm px-1 py-0' });
+                if (isTourRoute()) marker.bindPopup(getTourNodePopup(node, index));
 
                 marker.on('dragend', function(e) {
                     let newPos = e.target.getLatLng();
                     currentRouteNodes[index].coord = [newPos.lat, newPos.lng];
-                    recalculateDistances(); updateDynamicRoute();   
+                    recalculateDistances(); updateDynamicRoute(); saveTourRoute();
+                    if (index === 0 && busMarker && !busState.isRunning && busState.progressDist === 0) busMarker.setLatLng(newPos);
                 });
                 stopMarkers.push({ id: node.id || `wp_${index}`, marker: marker, node: node, index: index });
             });
@@ -360,6 +381,7 @@
 
         function updateDynamicRoute() {
             if (!routeLine) return;
+            if (tourEditing || currentRouteNodes.length < 2) { routeLine.setLatLngs(currentRouteNodes.map(n => n.coord)); return; }
             if (busState.isFaded || (!busState.isRunning && busState.progressDist >= busState.totalDist && busState.totalDist > 0)) { routeLine.setLatLngs([]); return; }
             let segment = 0;
             while (busState.progressDist >= busState.cumulativeDist[segment + 1] && segment < currentRouteNodes.length - 2) segment++;
@@ -385,8 +407,94 @@
         window.changeBusRoute = function() {
             let routeKey = document.getElementById('bus-route-select').value;
             currentRouteNodes = JSON.parse(JSON.stringify(busRoutes[routeKey]));
-            startBase = currentRouteNodes[0].coord;
-            map.panTo(startBase); resetSystem();
+            if (routeKey !== 'tour') setTourEditing(false);
+            updateTourControls();
+            if (currentRouteNodes.length > 0) map.panTo(currentRouteNodes[0].coord);
+            resetSystem();
+        };
+
+        // === 遊覽車自訂路線編輯 ===
+        function isTourRoute() { return document.getElementById('bus-route-select').value === 'tour'; }
+        function escapeHtml(str) { return String(str == null ? '' : str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+        function updateTourControls() { document.getElementById('tour-controls').classList.toggle('hidden', !isTourRoute()); }
+        function setTourEditing(on) {
+            tourEditing = on;
+            document.getElementById('tour-edit-toggle').checked = on;
+            if (routeLine) routeLine.setStyle({ weight: on ? 7 : 4 });
+            updateDynamicRoute();
+        }
+        function saveTourRoute() {
+            if (!isTourRoute()) return;
+            busRoutes['tour'] = JSON.parse(JSON.stringify(currentRouteNodes));
+            try { localStorage.setItem(TOUR_ROUTE_KEY, JSON.stringify(busRoutes['tour'])); } catch (e) { console.warn('遊覽車路線儲存失敗', e); }
+        }
+        function canEditTour() {
+            if (busState.isRunning || busState.isBoarding || busState.progressDist > 0) { alert('遊覽車已出發，請先按「重置」再編輯路線。'); return false; }
+            return true;
+        }
+        function rebuildTourRoute() {
+            saveTourRoute();
+            map.closePopup();
+            stopMarkers.forEach(s => map.removeLayer(s.marker)); stopMarkers = [];
+            if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+            initRoute();
+            startBase = currentRouteNodes.length > 0 ? currentRouteNodes[0].coord : startBase;
+            if (busMarker && currentRouteNodes.length === 0) { map.removeLayer(busMarker); busMarker = null; }
+            else if (busMarker) busMarker.setLatLng(currentRouteNodes[0].coord);
+            else if (currentMode === 'bus' && currentRouteNodes.length > 0) createBus();
+        }
+        function getTourNodePopup(node, index) {
+            let title = node.isStop ? escapeHtml(node.name) : '轉折點';
+            let btn = 'px-2 py-1 rounded text-xs shadow text-white';
+            return `<div class="text-center font-sans"><div class="mb-2 text-sm font-bold text-gray-700">${title}</div>
+                <div class="flex gap-1 justify-center">
+                    ${node.isStop ? `<button onclick="renameTourNode(${index})" class="${btn} bg-blue-500 hover:bg-blue-600">✏️ 改名</button>` : ''}
+                    <button onclick="toggleTourNodeType(${index})" class="${btn} bg-orange-500 hover:bg-orange-600">${node.isStop ? '改為轉折點' : '改為站點'}</button>
+                    <button onclick="deleteTourNode(${index})" class="${btn} bg-red-500 hover:bg-red-600">🗑️ 刪除</button>
+                </div></div>`;
+        }
+        function nextTourStopName() { return `站點 ${currentRouteNodes.filter(n => n.isStop).length + 1}`; }
+        function addTourStop(latlng) {
+            if (!canEditTour()) return;
+            currentRouteNodes.push({ coord: [latlng.lat, latlng.lng], isStop: true, id: 'tour_' + Date.now(), name: nextTourStopName() });
+            rebuildTourRoute();
+        }
+        function insertTourWaypoint(latlng) {
+            if (!canEditTour() || currentRouteNodes.length < 2) return;
+            // 找出點擊位置最靠近的路段，把轉折點插在該路段中間
+            let p = map.latLngToLayerPoint(latlng), best = 0, bestDist = Infinity;
+            for (let i = 0; i < currentRouteNodes.length - 1; i++) {
+                let d = L.LineUtil.pointToSegmentDistance(p, map.latLngToLayerPoint(currentRouteNodes[i].coord), map.latLngToLayerPoint(currentRouteNodes[i + 1].coord));
+                if (d < bestDist) { bestDist = d; best = i; }
+            }
+            currentRouteNodes.splice(best + 1, 0, { coord: [latlng.lat, latlng.lng], isStop: false });
+            rebuildTourRoute();
+        }
+        window.toggleTourEdit = function(on) {
+            if (on && !canEditTour()) { document.getElementById('tour-edit-toggle').checked = false; return; }
+            setTourEditing(on);
+        };
+        window.renameTourNode = function(index) {
+            let node = currentRouteNodes[index]; if (!node || !canEditTour()) return;
+            let name = prompt('請輸入站點名稱：', node.name || '');
+            if (name && name.trim()) { node.name = name.trim(); rebuildTourRoute(); }
+        };
+        window.toggleTourNodeType = function(index) {
+            let node = currentRouteNodes[index]; if (!node || !canEditTour()) return;
+            node.isStop = !node.isStop;
+            if (node.isStop) { node.id = node.id || 'tour_' + Date.now(); node.name = node.name || nextTourStopName(); }
+            rebuildTourRoute();
+        };
+        window.deleteTourNode = function(index) {
+            if (!currentRouteNodes[index] || !canEditTour()) return;
+            currentRouteNodes.splice(index, 1);
+            rebuildTourRoute();
+        };
+        window.clearTourRoute = function() {
+            if (!canEditTour() || !confirm('確定要清空遊覽車路線嗎？清空後請在地圖上點選新的站點。')) return;
+            currentRouteNodes = [];
+            rebuildTourRoute();
+            setTourEditing(true);
         };
 
         // === 4. 其他標記與系統狀態 ===
@@ -475,7 +583,9 @@
             customMarks.forEach(m => map.removeLayer(m)); customMarks = [];
             document.getElementById('bus-route-select').value = rec.busRouteId || '6';
             if(rec.customRouteNodes) currentRouteNodes = JSON.parse(JSON.stringify(rec.customRouteNodes)); else currentRouteNodes = JSON.parse(JSON.stringify(busRoutes[rec.busRouteId]));
-            startBase = currentRouteNodes[0].coord; map.panTo(startBase);
+            if ((rec.busRouteId || '6') !== 'tour') setTourEditing(false);
+            saveTourRoute(); updateTourControls();
+            if (currentRouteNodes.length > 0) map.panTo(currentRouteNodes[0].coord);
             poiData.forEach(p => { let savedState = rec.poiDataState ? rec.poiDataState.find(x => x.id === p.id) : null; if (savedState) { p.isActive = savedState.isActive; p.photos = JSON.parse(JSON.stringify(savedState.photos)); } });
             resetSystem(); 
             if (rec.customMarksData) {
@@ -510,6 +620,8 @@
             if (currentMode === 'walk' && !busState.isBoarding) {
                 walkState.target = e.latlng;
                 if (!walkState.isWalking) { walkState.isWalking = true; animateWalkLoop(); }
+            } else if (currentMode === 'bus' && tourEditing && isTourRoute()) {
+                addTourStop(e.latlng);
             } else if (currentMode === 'mark') {
                 let customIcon = L.divIcon({ className: 'custom-div-icon', html: `<div style="text-align: center;">${customPinSVG}</div>`, iconSize: [28, 38], iconAnchor: [14, 38] });
                 let mark = L.marker(e.latlng, { icon: customIcon }).addTo(map);
@@ -533,8 +645,8 @@
         }
 
         // === 8. 公車系統 ===
-        function createBus() { busMarker = L.marker(currentRouteNodes[0].coord, { icon: getBusIcon(0), zIndexOffset: 500 }).addTo(map); updateDynamicRoute(); }
-        function getBusIcon(count) { let countHtml = count > 0 ? `<div class="passenger-count">${count}</div>` : ''; return L.divIcon({ className: 'custom-div-icon', html: `<div class="bus-icon" style="opacity: ${busState.isFaded ? 0.3 : 1}">🚌${countHtml}</div>`, iconSize: [45, 35], iconAnchor: [22, 17] }); }
+        function createBus() { if (currentRouteNodes.length === 0) return; busMarker = L.marker(currentRouteNodes[0].coord, { icon: getBusIcon(0), zIndexOffset: 500 }).addTo(map); updateDynamicRoute(); }
+        function getBusIcon(count) { let countHtml = count > 0 ? `<div class="passenger-count">${count}</div>` : ''; return L.divIcon({ className: 'custom-div-icon', html: `<div class="bus-icon" style="opacity: ${busState.isFaded ? 0.3 : 1}">${isTourRoute() ? '🚍' : '🚌'}${countHtml}</div>`, iconSize: [45, 35], iconAnchor: [22, 17] }); }
         function updateBusIcon(count) { if(busMarker) busMarker.setIcon(getBusIcon(count)); }
         function boardBus(student) { student.inBus = true; map.removeLayer(student.marker); busState.passengers.push(student); updateBusIcon(busState.passengers.length); }
         function alightStudents(coord) {
@@ -561,7 +673,9 @@
         };
 
         window.startBus = function() {
+            if (currentRouteNodes.length < 2) { alert('路線至少需要 2 個點才能出發，請先編輯遊覽車路線。'); return; }
             if (!busMarker || busState.isRunning || busState.isFaded || busState.isBoarding) return;
+            if (tourEditing) setTourEditing(false);
             walkState.isWalking = false; cancelAnimationFrame(walkState.reqId);
             let active = students.filter(s => !s.inBus);
             if (active.length > 0) { busState.isBoarding = true; autoBoardBus(() => { busState.isBoarding = false; startBusJourney(); }); } else startBusJourney();
@@ -606,6 +720,7 @@
 
         // === 9. 重置系統與重繪 ===
         window.resetSystem = function() {
+            if (currentRouteNodes.length > 0) startBase = currentRouteNodes[0].coord;
             if (busMarker) { map.removeLayer(busMarker); busMarker = null; }
             busState = { isRunning: false, progressDist: 0, passengers: [], targetStopDist: -1, targetStopId: -1, totalDist: busState.totalDist, cumulativeDist: busState.cumulativeDist, isFaded: false, isBoarding: false };
             walkState.isWalking = false; cancelAnimationFrame(walkState.reqId);
