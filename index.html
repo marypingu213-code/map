@@ -141,9 +141,18 @@
             </div>
             <div class="mb-4 text-sm text-gray-600">這將儲存：目前路線的「自訂微調座標」、所有照片與學生名單。</div>
             
-            <button onclick="saveCurrentRecord()" class="w-full bg-indigo-500 text-white px-4 py-3 rounded hover:bg-indigo-600 font-bold shadow mb-4 text-lg">
+            <button onclick="saveCurrentRecord()" class="w-full bg-indigo-500 text-white px-4 py-3 rounded hover:bg-indigo-600 font-bold shadow mb-3 text-lg">
                 ➕ 將目前進度存為新紀錄
             </button>
+
+            <div class="mb-4 p-3 rounded border border-teal-300 bg-teal-50">
+                <div class="text-sm font-bold text-teal-800 mb-1">💻 跨電腦使用</div>
+                <div class="text-xs text-teal-700 mb-2">在 A 電腦按「匯出」存成檔案，用隨身碟、雲端硬碟或 Email 帶到 B 電腦，再按「匯入」即可接續進度。</div>
+                <div class="flex gap-2">
+                    <button onclick="exportProgressFile()" class="flex-1 bg-teal-500 text-white px-3 py-2 rounded hover:bg-teal-600 font-bold shadow text-sm">📤 匯出進度檔</button>
+                    <button onclick="importProgressFile()" class="flex-1 bg-white text-teal-700 border border-teal-400 px-3 py-2 rounded hover:bg-teal-100 font-bold shadow text-sm">📥 匯入進度檔</button>
+                </div>
+            </div>
 
             <div class="font-bold text-gray-700 mb-2 border-b pb-1">已儲存的紀錄清單</div>
             <div id="record-list" class="flex-1 overflow-y-auto border rounded p-2 space-y-1 min-h-[20vh] max-h-[40vh]"></div>
@@ -524,7 +533,7 @@
         function initStudents() {
             let activeStudents = allStudentsDB.filter(s => s.active);
             activeStudents.forEach((s, i) => {
-                let icon = L.divIcon({ className: 'custom-div-icon', html: `<div class="student-icon">${s.emoji}<div class="student-name">${s.name}</div></div>`, iconSize: [40, 40], iconAnchor: [20, 20] });
+                let icon = L.divIcon({ className: 'custom-div-icon', html: `<div class="student-icon">${escapeHtml(s.emoji)}<div class="student-name">${escapeHtml(s.name)}</div></div>`, iconSize: [40, 40], iconAnchor: [20, 20] });
                 let pos = [startBase[0] - i * 0.0003, startBase[1] + i * 0.0002];
                 students.push({ id: s.id, data: s, marker: L.marker(pos, { icon: icon, zIndexOffset: 1000 }).addTo(map), inBus: false });
             });
@@ -537,7 +546,7 @@
             const list = document.getElementById('student-list'); list.innerHTML = '';
             if (allStudentsDB.length === 0) { list.innerHTML = `<div class="text-center text-gray-500 py-4">目前沒有學生，請由上方新增</div>`; return; }
             allStudentsDB.forEach((stu, index) => {
-                list.innerHTML += `<div class="flex items-center justify-between p-2 border-b hover:bg-blue-50 transition rounded bg-white"><label class="flex items-center space-x-3 cursor-pointer flex-1"><input type="checkbox" class="form-checkbox h-5 w-5 text-blue-600 rounded" ${stu.active ? 'checked' : ''} onchange="toggleStudent(${index}, this.checked)"><div class="text-2xl border bg-gray-50 rounded-full w-10 h-10 flex items-center justify-center">${stu.emoji}</div><span class="font-bold text-gray-700 text-lg">${stu.name}</span></label><button onclick="deleteStudent(${index})" class="text-gray-400 hover:text-red-500 px-3 py-1 font-bold rounded">刪除</button></div>`;
+                list.innerHTML += `<div class="flex items-center justify-between p-2 border-b hover:bg-blue-50 transition rounded bg-white"><label class="flex items-center space-x-3 cursor-pointer flex-1"><input type="checkbox" class="form-checkbox h-5 w-5 text-blue-600 rounded" ${stu.active ? 'checked' : ''} onchange="toggleStudent(${index}, this.checked)"><div class="text-2xl border bg-gray-50 rounded-full w-10 h-10 flex items-center justify-center">${escapeHtml(stu.emoji)}</div><span class="font-bold text-gray-700 text-lg">${escapeHtml(stu.name)}</span></label><button onclick="deleteStudent(${index})" class="text-gray-400 hover:text-red-500 px-3 py-1 font-bold rounded">刪除</button></div>`;
             });
         }
         window.toggleStudent = function(index, isChecked) { allStudentsDB[index].active = isChecked; }
@@ -560,7 +569,7 @@
                 let d = new Date(rec.timestamp); let dateStr = `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')} ${d.getHours()}:${d.getMinutes().toString().padStart(2,'0')}`;
                 list.innerHTML += `<div class="flex items-center justify-between p-3 border-b hover:bg-indigo-50 transition rounded bg-white gap-2">
                     <div class="flex-1 cursor-pointer overflow-hidden" onclick="loadRecord(${index})">
-                        <div class="font-bold text-indigo-800 text-lg truncate" title="點擊載入此紀錄">${rec.name}</div>
+                        <div class="font-bold text-indigo-800 text-lg truncate" title="點擊載入此紀錄">${escapeHtml(rec.name)}</div>
                         <div class="text-xs text-gray-500 truncate">儲存: ${dateStr} | ${rec.busRouteId}號公車</div>
                     </div>
                     <div class="flex flex-shrink-0 gap-1">
@@ -574,13 +583,22 @@
         window.saveCurrentRecord = function() {
             let today = new Date(); let defaultName = `${today.getFullYear() - 1911}.${(today.getMonth() + 1).toString().padStart(2, '0')}.${today.getDate().toString().padStart(2, '0')}市區戶外教學`;
             let name = prompt("請輸入新紀錄的名稱（您可以自由編輯）：", defaultName); if (!name) return;
-            let record = { name: name, timestamp: Date.now(), busRouteId: document.getElementById('bus-route-select').value, customRouteNodes: JSON.parse(JSON.stringify(currentRouteNodes)), students: JSON.parse(JSON.stringify(allStudentsDB)), customMarksData: customMarks.map(m => ({ lat: m.getLatLng().lat, lng: m.getLatLng().lng, photos: JSON.parse(JSON.stringify(m.photos)), markId: m.markId })), poiDataState: poiData.map(p => ({ id: p.id, isActive: p.isActive, photos: JSON.parse(JSON.stringify(p.photos)) })) };
+            let record = buildRecord(name);
             try { recordsDB.unshift(record); localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); alert(`✅ 成功儲存新紀錄：【${name}】`); } catch(e) { alert("❌ 儲存失敗！可能是照片太大超出了儲存容量限制。"); recordsDB.shift(); }
+        }
+        // 把目前地圖上的進度打包成一筆紀錄
+        function buildRecord(name) {
+            return { name: name, timestamp: Date.now(), busRouteId: document.getElementById('bus-route-select').value, customRouteNodes: JSON.parse(JSON.stringify(currentRouteNodes)), students: JSON.parse(JSON.stringify(allStudentsDB)), customMarksData: customMarks.map(m => ({ lat: m.getLatLng().lat, lng: m.getLatLng().lng, photos: JSON.parse(JSON.stringify(m.photos)), markId: m.markId })), poiDataState: poiData.map(p => ({ id: p.id, isActive: p.isActive, photos: JSON.parse(JSON.stringify(p.photos)) })) };
         }
         window.loadRecord = function(index) {
             if (!confirm("載入紀錄將會覆蓋您目前的進度，確定嗎？")) return;
-            let rec = recordsDB[index];
-            allStudentsDB = JSON.parse(JSON.stringify(rec.students)); localStorage.setItem('tainan_map_students', JSON.stringify(allStudentsDB));
+            applyRecord(recordsDB[index]);
+            closeRecordManager();
+        }
+        // 將一筆紀錄套用到地圖上（載入紀錄、匯入進度檔共用）
+        function applyRecord(rec) {
+            if (!busRoutes[rec.busRouteId]) rec.busRouteId = '6';
+            if (Array.isArray(rec.students)) { allStudentsDB = JSON.parse(JSON.stringify(rec.students)); try { localStorage.setItem('tainan_map_students', JSON.stringify(allStudentsDB)); } catch (e) {} }
             customMarks.forEach(m => map.removeLayer(m)); customMarks = [];
             document.getElementById('bus-route-select').value = rec.busRouteId || '6';
             if(rec.customRouteNodes) currentRouteNodes = JSON.parse(JSON.stringify(rec.customRouteNodes)); else currentRouteNodes = JSON.parse(JSON.stringify(busRoutes[rec.busRouteId]));
@@ -592,18 +610,57 @@
             if (rec.customMarksData) {
                 rec.customMarksData.forEach(cmd => {
                     let customIcon = L.divIcon({ className: 'custom-div-icon', html: `<div style="text-align: center;">${customPinSVG}</div>`, iconSize: [28, 38], iconAnchor: [14, 38] });
-                    let mark = L.marker([cmd.lat, cmd.lng], { icon: customIcon }).addTo(map); mark.markId = cmd.markId; mark.photos = JSON.parse(JSON.stringify(cmd.photos)); 
+                    let mark = L.marker([cmd.lat, cmd.lng], { icon: customIcon }).addTo(map); mark.markId = Number(cmd.markId) || Date.now() + Math.random(); mark.photos = JSON.parse(JSON.stringify(cmd.photos)); 
                     let popupContent = `<div class="text-center font-sans"><div class="mb-2 text-sm font-bold text-gray-700">自訂探索景點</div><button onclick="openCustomGallery(${mark.markId})" class="px-3 py-1 bg-blue-500 text-white rounded text-xs shadow hover:bg-blue-600 mr-1">📸 相片集</button><button onclick="removeCustomMark(${mark.markId})" class="px-3 py-1 bg-red-500 text-white rounded text-xs shadow hover:bg-red-600">🗑️ 移除</button></div>`;
                     mark.bindPopup(popupContent); customMarks.push(mark);
                 });
             }
-            closeRecordManager();
         }
+
+        // === 跨電腦：匯出／匯入進度檔 ===
+        const PROGRESS_FILE_APP = 'tainan-outdoor-map';
+        window.exportProgressFile = function() {
+            let d = new Date(), pad = n => n.toString().padStart(2, '0');
+            let data = { app: PROGRESS_FILE_APP, version: 1, exportedAt: d.toISOString(), current: buildRecord('匯出時的進度'), records: recordsDB, tourRoute: busRoutes['tour'] };
+            let blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+            let a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `tainan-map-progress_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.json`;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        };
+        window.importProgressFile = function() {
+            let input = document.createElement('input');
+            input.type = 'file'; input.accept = '.json,application/json';
+            input.onchange = e => {
+                let file = e.target.files[0]; if (!file) return;
+                let reader = new FileReader();
+                reader.onload = ev => {
+                    let data;
+                    try { data = JSON.parse(ev.target.result); } catch (err) { alert('❌ 無法讀取這個檔案，請確認是從本地圖「匯出」的進度檔。'); return; }
+                    if (!data || data.app !== PROGRESS_FILE_APP || !data.current || !Array.isArray(data.records)) { alert('❌ 這不是本地圖的進度檔，請確認檔案是否正確。'); return; }
+                    let newRecords = data.records.filter(r => r && r.name && !recordsDB.some(x => x.timestamp === r.timestamp && x.name === r.name));
+                    if (!confirm(`即將匯入進度檔（匯出時間：${new Date(data.exportedAt).toLocaleString()}）\n\n・目前畫面會換成檔案中的進度\n・新增 ${newRecords.length} 筆活動紀錄到清單（已有的不重複加入）\n\n確定匯入嗎？`)) return;
+                    if (Array.isArray(data.tourRoute)) {
+                        busRoutes['tour'] = data.tourRoute;
+                        try { localStorage.setItem(TOUR_ROUTE_KEY, JSON.stringify(data.tourRoute)); } catch (err) {}
+                    }
+                    recordsDB = newRecords.concat(recordsDB).sort((a, b) => b.timestamp - a.timestamp);
+                    let saved = true;
+                    try { localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); } catch (err) { saved = false; }
+                    applyRecord(data.current);
+                    renderRecordList(); closeRecordManager();
+                    alert(saved ? '✅ 匯入完成！已接續檔案中的進度。' : '⚠️ 已載入檔案中的進度，但紀錄清單太大，無法存進這台電腦的瀏覽器（照片過多）。下次仍可再次匯入同一個檔案。');
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        };
         window.deleteRecord = function(index) { if(confirm('確定要永久刪除這筆紀錄嗎？')) { recordsDB.splice(index, 1); localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); } }
         window.renameRecord = function(index) { let newName = prompt("請輸入新的紀錄名稱：", recordsDB[index].name); if (newName && newName.trim() !== "") { recordsDB[index].name = newName.trim(); localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); } };
         window.updateRecord = function(index) {
             if (!confirm(`確定要將目前的進度「覆蓋」儲存到【${recordsDB[index].name}】嗎？\n(舊有的紀錄將會被更新)`)) return;
-            let record = { name: recordsDB[index].name, timestamp: Date.now(), busRouteId: document.getElementById('bus-route-select').value, customRouteNodes: JSON.parse(JSON.stringify(currentRouteNodes)), students: JSON.parse(JSON.stringify(allStudentsDB)), customMarksData: customMarks.map(m => ({ lat: m.getLatLng().lat, lng: m.getLatLng().lng, photos: JSON.parse(JSON.stringify(m.photos)), markId: m.markId })), poiDataState: poiData.map(p => ({ id: p.id, isActive: p.isActive, photos: JSON.parse(JSON.stringify(p.photos)) })) };
+            let record = buildRecord(recordsDB[index].name);
             try { recordsDB[index] = record; localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); alert(`✅ 成功更新進度至：【${record.name}】`); } catch(e) { alert("❌ 儲存失敗！可能是照片太大超出了儲存容量限制。"); }
         };
 
