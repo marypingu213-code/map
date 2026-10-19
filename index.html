@@ -316,7 +316,38 @@
             { id: 's2', name: "小華", emoji: "👧", active: true },
             { id: 's3', name: "小強", emoji: "👨‍🎓", active: true }
         ];
-        let recordsDB = loadStorage('tainan_map_records', []);
+        // 活動紀錄（含照片）改存在瀏覽器的 IndexedDB：容量遠大於 localStorage 的約 5 MB；
+        // 第一次開啟時會把舊的 localStorage 紀錄自動搬過去。瀏覽器不支援 IndexedDB 時才退回 localStorage。
+        const RECORDS_KEY = 'tainan_map_records';
+        let recordsDB = loadStorage(RECORDS_KEY, []);
+        let idbAvailable = false;
+        const recordStorePromise = new Promise((resolve, reject) => {
+            if (!window.indexedDB) { reject(new Error('IndexedDB not supported')); return; }
+            let req = indexedDB.open('tainan_map', 1);
+            req.onupgradeneeded = () => req.result.createObjectStore('kv');
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+        function idbRequest(mode, fn) {
+            return recordStorePromise.then(db => new Promise((resolve, reject) => {
+                let tx = db.transaction('kv', mode), req = fn(tx.objectStore('kv'));
+                tx.oncomplete = () => resolve(req.result);
+                tx.onerror = tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction failed'));
+            }));
+        }
+        const recordsReady = idbRequest('readonly', store => store.get(RECORDS_KEY)).then(saved => {
+            idbAvailable = true;
+            if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+            if (Array.isArray(saved)) { recordsDB = saved; return; }
+            if (recordsDB.length > 0) {
+                return idbRequest('readwrite', store => store.put(recordsDB, RECORDS_KEY)).then(() => { try { localStorage.removeItem(RECORDS_KEY); } catch (e) {} });
+            }
+        }).catch(err => console.warn('IndexedDB 無法使用，活動紀錄改存 localStorage', err));
+        function persistRecords() {
+            if (idbAvailable) return idbRequest('readwrite', store => store.put(recordsDB, RECORDS_KEY));
+            return new Promise(resolve => { localStorage.setItem(RECORDS_KEY, JSON.stringify(recordsDB)); resolve(); });
+        }
+        const SAVE_FAILED_MSG = "❌ 儲存失敗！這台電腦的瀏覽器儲存空間不足。\n建議：先「📤 匯出進度檔」備份，再刪除不需要的舊紀錄或照片後重試。";
 
         // 遊覽車自訂路線：存在瀏覽器中，重新開啟網頁時沿用
         const TOUR_ROUTE_KEY = 'tainan_map_tour_route';
@@ -569,7 +600,7 @@
         window.saveStudents = function() { localStorage.setItem('tainan_map_students', JSON.stringify(allStudentsDB)); closeStudentManager(); resetSystem(); }
 
         // === 6. 儲存與提取紀錄 (帶編輯功能) ===
-        window.openRecordManager = function() { document.getElementById('record-modal').style.display = 'flex'; renderRecordList(); }
+        window.openRecordManager = function() { document.getElementById('record-modal').style.display = 'flex'; renderRecordList(); recordsReady.then(renderRecordList); }
         window.closeRecordManager = function() { document.getElementById('record-modal').style.display = 'none'; }
         function renderRecordList() {
             const list = document.getElementById('record-list'); list.innerHTML = '';
@@ -593,7 +624,11 @@
             let today = new Date(); let defaultName = `${today.getFullYear() - 1911}.${(today.getMonth() + 1).toString().padStart(2, '0')}.${today.getDate().toString().padStart(2, '0')}市區戶外教學`;
             let name = prompt("請輸入新紀錄的名稱（您可以自由編輯）：", defaultName); if (!name) return;
             let record = buildRecord(name);
-            try { recordsDB.unshift(record); localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); markSaved(); alert(`✅ 成功儲存新紀錄：【${name}】`); } catch(e) { alert("❌ 儲存失敗！可能是照片太大超出了儲存容量限制。"); recordsDB.shift(); }
+            recordsReady.then(() => {
+                recordsDB.unshift(record);
+                return persistRecords().then(() => { renderRecordList(); markSaved(); alert(`✅ 成功儲存新紀錄：【${name}】`); })
+                    .catch(e => { console.error(e); recordsDB.shift(); renderRecordList(); alert(SAVE_FAILED_MSG); });
+            });
         }
         // 把目前地圖上的進度打包成一筆紀錄
         function buildRecord(name) {
@@ -628,7 +663,8 @@
 
         // === 跨電腦：匯出／匯入進度檔 ===
         const PROGRESS_FILE_APP = 'tainan-outdoor-map';
-        window.exportProgressFile = function() {
+        window.exportProgressFile = function() { recordsReady.then(downloadProgressFile); };
+        function downloadProgressFile() {
             let d = new Date(), pad = n => n.toString().padStart(2, '0');
             let data = { app: PROGRESS_FILE_APP, version: 1, exportedAt: d.toISOString(), current: buildRecord('匯出時的進度'), records: recordsDB, tourRoute: busRoutes['tour'] };
             let blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
@@ -637,14 +673,14 @@
             a.download = `tainan-map-progress_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.json`;
             document.body.appendChild(a); a.click(); a.remove(); markSaved();
             setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-        };
+        }
         window.importProgressFile = function() {
             let input = document.createElement('input');
             input.type = 'file'; input.accept = '.json,application/json';
             input.onchange = e => {
                 let file = e.target.files[0]; if (!file) return;
                 let reader = new FileReader();
-                reader.onload = ev => {
+                reader.onload = ev => recordsReady.then(() => {
                     let data;
                     try { data = JSON.parse(ev.target.result); } catch (err) { alert('❌ 無法讀取這個檔案，請確認是從本地圖「匯出」的進度檔。'); return; }
                     if (!data || data.app !== PROGRESS_FILE_APP || !data.current || !Array.isArray(data.records)) { alert('❌ 這不是本地圖的進度檔，請確認檔案是否正確。'); return; }
@@ -655,22 +691,24 @@
                         try { localStorage.setItem(TOUR_ROUTE_KEY, JSON.stringify(data.tourRoute)); } catch (err) {}
                     }
                     recordsDB = newRecords.concat(recordsDB).sort((a, b) => b.timestamp - a.timestamp);
-                    let saved = true;
-                    try { localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); } catch (err) { saved = false; }
                     applyRecord(data.current); markSaved();
                     renderRecordList(); closeRecordManager();
-                    alert(saved ? '✅ 匯入完成！已接續檔案中的進度。' : '⚠️ 已載入檔案中的進度，但紀錄清單太大，無法存進這台電腦的瀏覽器（照片過多）。下次仍可再次匯入同一個檔案。');
-                };
+                    persistRecords().then(() => alert('✅ 匯入完成！已接續檔案中的進度。'))
+                        .catch(e => { console.error(e); alert('⚠️ 已載入檔案中的進度，但這台電腦的瀏覽器儲存空間不足，紀錄清單沒有存進去。下次仍可再次匯入同一個檔案。'); });
+                });
                 reader.readAsText(file);
             };
             input.click();
         };
-        window.deleteRecord = function(index) { if(confirm('確定要永久刪除這筆紀錄嗎？')) { recordsDB.splice(index, 1); localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); } }
-        window.renameRecord = function(index) { let newName = prompt("請輸入新的紀錄名稱：", recordsDB[index].name); if (newName && newName.trim() !== "") { recordsDB[index].name = newName.trim(); localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); } };
+        window.deleteRecord = function(index) { if(confirm('確定要永久刪除這筆紀錄嗎？')) { recordsDB.splice(index, 1); persistRecords().catch(e => console.error(e)); renderRecordList(); } }
+        window.renameRecord = function(index) { let newName = prompt("請輸入新的紀錄名稱：", recordsDB[index].name); if (newName && newName.trim() !== "") { recordsDB[index].name = newName.trim(); persistRecords().catch(e => console.error(e)); renderRecordList(); } };
         window.updateRecord = function(index) {
             if (!confirm(`確定要將目前的進度「覆蓋」儲存到【${recordsDB[index].name}】嗎？\n(舊有的紀錄將會被更新)`)) return;
             let record = buildRecord(recordsDB[index].name);
-            try { recordsDB[index] = record; localStorage.setItem('tainan_map_records', JSON.stringify(recordsDB)); renderRecordList(); markSaved(); alert(`✅ 成功更新進度至：【${record.name}】`); } catch(e) { alert("❌ 儲存失敗！可能是照片太大超出了儲存容量限制。"); }
+            let previous = recordsDB[index];
+            recordsDB[index] = record;
+            persistRecords().then(() => { renderRecordList(); markSaved(); alert(`✅ 成功更新進度至：【${record.name}】`); })
+                .catch(e => { console.error(e); recordsDB[index] = previous; renderRecordList(); alert(SAVE_FAILED_MSG); });
         };
 
         // === 7. 模式與地圖事件 ===
@@ -852,7 +890,7 @@
                             let canvas = document.createElement('canvas');
                             let ctx = canvas.getContext('2d');
                             
-                            // 設定最大解析度為 800x800，避免佔用 LocalStorage 空間
+                            // 設定最大解析度為 800x800，避免佔用瀏覽器儲存空間
                             let MAX_WIDTH = 800;
                             let MAX_HEIGHT = 800;
                             let width = img.width;
