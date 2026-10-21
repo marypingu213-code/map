@@ -800,7 +800,7 @@
         }
 
         // 遊覽車臨時下車時，從等候的站點繼續行駛（不從起點重來）
-        function startBusJourney() { busState.isRunning = true; busState.isWaiting = false; updateBusStatus(); animateBus(); }
+        function startBusJourney() { busState.isRunning = true; busState.isWaiting = false; busState.speed = 0; updateBusStatus(); animateBus(); }
 
         // 顯示遊覽車等候／抵達終點等狀態，並切換出發按鈕文字
         function updateBusStatus(message) {
@@ -809,9 +809,24 @@
             btn.innerText = busState.isWaiting ? '🚍 上車，繼續出發' : '出發！(上車)';
         }
 
+        // 行駛速度（公尺／畫格）：公車固定 8；遊覽車在一般路段高速行駛，
+        // 接近地圖標（自訂圖釘）或要下車的站點時逐漸減速，離開後再慢慢加速
+        const BUS_SPEED = 8, TOUR_CRUISE_SPEED = 40, TOUR_SLOW_SPEED = 4, TOUR_SLOW_RADIUS = 1500;
+        function getBusSpeed() {
+            if (!isTourRoute()) return BUS_SPEED;
+            let pos = busMarker.getLatLng(), d = Infinity;
+            customMarks.forEach(m => { d = Math.min(d, map.distance(pos, m.getLatLng())); });
+            if (busState.targetStopDist !== -1) d = Math.min(d, busState.targetStopDist - busState.progressDist);
+            let target = d >= TOUR_SLOW_RADIUS ? TOUR_CRUISE_SPEED : Math.max(TOUR_SLOW_SPEED, TOUR_CRUISE_SPEED * d / TOUR_SLOW_RADIUS);
+            let current = busState.speed || TOUR_SLOW_SPEED;
+            current = target > current ? Math.min(target, current + 0.4) : Math.max(target, current - 2);
+            busState.speed = current;
+            return current;
+        }
+
         function animateBus() {
             if (!busState.isRunning) return;
-            let speed = 8, nextProgress = busState.progressDist + speed;
+            let speed = getBusSpeed(), nextProgress = busState.progressDist + speed;
             if (busState.targetStopDist !== -1 && nextProgress >= busState.targetStopDist) {
                 busState.progressDist = busState.targetStopDist; 
                 let stopNode = currentRouteNodes.find(n => n.id === busState.targetStopId);
